@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PropertyList> 
+
+  <fx> 
+
+    <crank> 
+      <name>engstart</name>
+      <path>Sounds/cranking.wav</path>
+	  <condition>
+        <property>engines/engine[0]/cranking</property>
+        <not>
+          <property>engines/engine[0]/running</property>
+        </not>
+      </condition>
+      
+      <volume> 
+        <property>orientation/alpha-deg</property>
+        <type>log</type>
+        <min>0.5</min>
+        <max>1.0</max>
+      </volume>
+      <volume> 
+        <factor>1.2</factor>
+        <max>1.0</max>
+      </volume>
+      <reference-dist>100</reference-dist>
+      <max-dist>2000</max-dist>
+    </crank>
+	
+	<crank> 
+        <name>cough</name>
+        <path>Sounds/engstart.wav</path>
+        <condition>
+        <property>engines/engine[0]/cranking</property>
+        <not>
+          <property>engines/engine[0]/running</property>
+        </not>
+      </condition>
+        <volume> 
+          <property>orientation/alpha-deg</property>
+          <type>log</type>
+          <min>0.5</min>
+          <max>1.0</max>
+        </volume>
+        <volume> 
+          <factor>1.2</factor>
+          <max>1.0</max>
+        </volume>
+	<position>
+	  <x>-2.48</x>
+	</position>
+      </crank>
+
+    <engine> 
+      <name>engine idle rpm</name>
+      <mode>looped</mode>
+      <path>Sounds/wasp.wav</path>
+      <condition> 
+
+       <less-than> 
+          <property>engines/engine/rpm</property>
+          <value>3500</value>
+        </less-than>
+
+        <greater-than> 
+          <property>engines/engine/rpm</property>
+          <value>250</value>
+        </greater-than>
+
+      </condition>
+      <volume> 
+        <property>orientation/alpha-deg</property>
+        <type>log</type>
+        <min>1.0</min>
+        <max>1.5</max>
+      </volume>
+
+      <pitch> 
+        <property>engines/engine/rpm</property>
+        <factor>0.0009496</factor>
+        <min>0.6</min>
+        <max>2.0</max>
+        <offset>0</offset>
+      </pitch>
+      <reference-dist>100</reference-dist>
+      <max-dist>2000</max-dist>
+    </engine>
+
+ <engine> 
+      <name>engine</name>
+      <mode>looped</mode>
+      <path>Sounds/wasp.wav</path>
+      <condition> 
+        <property>/engines/engine/running</property>
+       <less-than> 
+          <property>/engines/engine/rpm</property>
+          <value>3500</value>
+        </less-than>
+        <greater-than> 
+          <property>/engines/engine/rpm</property>
+          <value>200</value>
+        </greater-than>
+		<greater-than>
+     <property>/consumables/fuel/total-fuel-gals</property>
+    <value>2.0</value>
+	</greater-than>
+      </condition>
+      <volume> 
+        <property>/orientation/alpha-deg</property>
+        <type>log</type>
+        <min>0.4</min>
+        <max>2.3</max>
+      </volume>
+      <volume> 
+        <property>/sim/current-view/internal</property>
+        <offset>1.0</offset>
+        <factor>-0.3</factor>
+      </volume>
+      <pitch> 
+        <property>/engines/engine/rpm</property>
+        <factor>0.001</factor>
+        <min>1</min>
+        <max>3</max>
+        <offset>0</offset>
+      </pitch>
+      <reference-dist>100</reference-dist>
+      <max-dist>2000</max-dist>
+    </engine>
+    
+
+ <propeller>
+      <name>propeller</name>
+      <mode>looped</mode>
+      <path>Sounds/turboprop1.wav</path>
+      <property>/engines/engine/running</property>
+      <volume>
+        <property>/orientation/alpha-deg</property>
+        <type>log</type>
+        <min>0.2</min>
+        <max>0.5</max>
+      </volume>
+      <volume>
+        <property>/sim/current-view/internal</property>
+        <factor>0.5</factor>
+      </volume>
+      <pitch>
+        <property>/engines/engine/mp-osi</property>
+        <factor>0.0036</factor>
+        <min>0.6</min>
+        <max>2.1</max>
+        <offset>0.9</offset>
+      </pitch>
+      <position>
+        <x>  2.3 </x>
+        <y>  0.0 </y>
+        <z> -0.1 </z>
+      </position>
+      <orientation>
+        <x> 1 </x>
+        <y> 0 </y>
+        <z> 0 </z>
+        <inner-angle>  70.0 </inner-angle>
+        <outer-angle> 150.0 </outer-angle>
+        <outer-gain>    0.2 </outer-gain>
+      </orientation>
+      <reference-dist>100</reference-dist>
+      <max-dist>2000</max-dist>
+    </propeller>
+
+<engine>
+  <name>engine shut down rpm</name>
+  <path>Aircraft/JT-5B/Sounds/Xshutdown.wav</path>
+  <condition>
+    <property>engines/engine/running</property>
+    <not>
+      <property>controls/engines/engine/cutoff</property>
+    </not>
+    <less-than-equals>
+      <property>engines/engine/rpm</property>
+      <value>1089</value>
+    </less-than-equals>
+  </condition>
+  <volume>
+    <property>orientation/alpha-deg</property>
+    <type>log</type>
+    <min>1.0</min>
+    <max>1.5</max>
+  </volume>
+  <volume>
+    <property>sim/current-view/internal</property>
+    <offset>1.0</offset>
+    <factor>-0.4</factor>
+  </volume>
+  <reference-dist>100</reference-dist>
+  <max-dist>2000</max-dist>
+</engine>
+
+  
+    <!-- rotor -->
+    <rotor>
+      <name>rotor</name>
+      <mode>looped</mode>
+      <path>Sounds/rotor.wav</path> 
+      <condition>
+        <and>
+          <greater-than>
+            <property>rotors/main/rpm</property>
+            <value>50</value>
+          </greater-than>
+          <not>
+            <property>sim/crashed</property>
+          </not>
+        </and>
+      </condition>
+      <volume>
+        <property>rotors/main/rpm</property>
+        <factor>0.02</factor>
+        <max>0.5</max>
+      </volume>
+      <pitch>
+        <property>rotors/main/rpm</property>
+        <factor>0.0015</factor>
+        <offset>-0.2</offset>
+        <max>1.5</max>
+      </pitch>
+      <position>
+        <x> -1.7 </x>
+        <y>  0.0 </y>
+        <z>  1.1 </z>
+      </position>
+      <reference-dist>100</reference-dist>
+      <max-dist>2000</max-dist>
+    </rotor>
+
+ <rotor>
+      <name>stall</name>
+      <mode>looped</mode>
+      <path>Sounds/rotor_stall.wav</path>
+      <condition>
+        <and>
+          <greater-than>
+            <property>rotors/main/rpm</property>
+            <value>50</value>
+          </greater-than>
+          <not>
+            <property>sim/crashed</property>
+          </not>
+        </and>
+      </condition>
+      <volume>
+        <property>rotors/main/stall-filtered</property>
+        <factor>350</factor>
+        <max>1.0</max>
+      </volume>
+      <pitch>
+        <property>rotors/main/rpm</property>
+        <factor>0.001131</factor>
+        <offset>0</offset>
+        <max>1.75</max>
+      </pitch>
+      <position>
+        <x> -1.7 </x>
+        <y>  0.0 </y>
+        <z>  1.1 </z>
+      </position>
+      <reference-dist>100</reference-dist>
+      <max-dist>2000</max-dist>
+    </rotor>
+
+
+  </fx>
+
+</PropertyList>

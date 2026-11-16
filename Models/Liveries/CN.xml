@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PropertyList>
+<sim>
+    <model>
+        <livery>
+            <name type="string">Cosa Nostra Recon.</name>
+            <index type="int">0</index>
+            <texture>Liveries/CN.png</texture>
+        </livery>
+    </model>
+</sim>
+</PropertyList>

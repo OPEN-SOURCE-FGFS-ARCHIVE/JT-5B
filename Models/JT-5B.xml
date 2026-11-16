@@ -1,0 +1,1173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PropertyList>
+
+  <path>JT-5B.ac</path>
+
+<offsets>
+    <z-m>0.110</z-m>
+    <pitch-deg>2.00</pitch-deg>
+ </offsets>
+
+  <sound><path>Aircraft/JT-5B/Sounds/mp-sound.xml</path></sound>
+  
+	<nasal>
+        <load>
+            var livery_update = aircraft.livery_update.new("Aircraft/JT-5B/Models/liveries", 30);
+			
+			var self = cmdarg();
+			
+			var aliases = [];
+			for (var i = 0; i &lt; 6; i += 1) {
+				var door = self.getNode("sim/model/bo105/doors/door[" ~ i ~ "]/position-norm", 1);
+				var generic = self.getNode("sim/multiplay/generic/float[" ~ i ~ "]", 1);
+				door.alias(generic);
+				append(aliases, door);
+			
+			}
+
+			
+    <![CDATA[
+var root = cmdarg();
+var rootindex = root.getIndex();
+var mpPath = "/ai/models/multiplayer["~ rootindex ~"]/";
+
+var lightsPath = mpPath~"lightpack/"; #path to the property node, where all internal values are placed
+
+props.globals.initNode(mpPath~"sim/is-MP-Aircraft", 1, "BOOL");
+      
+srand();
+#wherever you want to add randomization of time, use something like:  + rand()*0.05-0.025 (included by default where appropriate)
+
+
+#list of switches for lights - if you don't intend to use some light, assign it nil value instead, like whateverSwitch = nil; and you don't need to care about anything else
+#IMPORTANT: don't put / on the start of the string, it's already included in the mpPath property
+var navSwitch = mpPath~"controls/lighting/nav-lights-switch";
+var beaconSwitch = mpPath~"controls/lighting/beacon-switch";
+var strobeSwitch = mpPath~"controls/lighting/strobe-switch";
+var landingSwitch = mpPath~"controls/lighting/landing-lights-switch";
+var taxiSwitch = mpPath~"controls/lighting/taxi-light-switch";
+var probeSwitch = mpPath~"controls/lighting/probe-light-switch";
+var whiteSwitch = mpPath~"controls/lighting/white-light-switch";
+var searchSwitch = mpPath~"controls/lighting/search-light-switch";
+#switch this from 1 to 0 if you want to use advanced cyclical fading animation of the the nav lights instead of being stable on when the switch is on
+navStillOn = 1;
+
+
+#I need to set listener on some MP transferred properties; this doesn't seem to work well sometimes, so I mirror them to the original location on any change
+#This also simplifies work as I can use almost the same code for MP as is the local Nasal. Furthermore, I can use meaningful property names in the model XML files instead of referencing the MP properties. 
+var mpVar = {
+	new: func(propIn, propOut) {
+		var m = { parents: [mpVar] };
+		m.propIn = propIn;
+		m.propOut = propOut;
+		if(propIn==nil or propOut==nil) return m;
+		m.value = getprop(propIn);
+		setprop(propOut, m.value);
+		return m;
+	},
+	check: func {
+		if(me.propIn==nil or me.propOut==nil) return;
+		var newValue = getprop(me.propIn);
+		if(newValue != me.value) {
+			setprop(me.propOut, newValue);
+			me.value = newValue;
+			#print("value of "~me.propOut~" changed: "~newValue);
+		}
+	},
+};
+#init any property copy object needed in this array (anything you need to transfer over MP, but you are using the original paths in your xmls)
+#also used for properties you are using a listener on, or properties which you maybe want to manipulate during the <unload> 
+#if you're just using the pack, change the values according to the MP bindings in the -set.xml file
+#you don't need to delete the entries if the path is nil - it gets skipped automatically and the MP path is just ignored
+var mirrorValues = [
+	mpVar.new(mpPath~"sim/multiplay/generic/int[7]", mpPath~"sim/crashed"),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[0]", navSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[1]", beaconSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[1]", strobeSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[2]", landingSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[3]", taxiSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[3]", probeSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[0]", whiteSwitch),
+	mpVar.new(mpPath~"sim/multiplay/generic/int[8]", searchSwitch),
+];
+#loop at the default MP transfer frequency (10Hz)
+var mirrorTimer = maketimer(0.1, func {
+	foreach(var mir; mirrorValues) {
+		mir.check();
+	}
+});
+mirrorTimer.start();
+
+
+
+#### NAV LIGHTS ####
+
+#class for a periodic fade in/out animation - for flashing, use rather standard aircraft.light.new(), as in Beacon and Strobe section
+var lightCycle = {
+	#constructor
+	new: func(propSwitch, propOut) {
+		m = { parents: [lightCycle] };
+		props.globals.initNode(propOut, 0, "DOUBLE");
+		props.globals.initNode(propSwitch, 1, "BOOL");
+		m.fadeIn = 0.4 + rand()*0.05-0.025; #fade in time
+		m.fadeOut = 0.4 + rand()*0.05-0.025; #fade out time
+		m.stayOn = 1.5 + rand()*0.05-0.025; #stable on period
+		m.stayOff = 1 + rand()*0.05-0.025; #stable off period
+		m.turnOff = 0.12; #fade out time when turned off
+		m.phase = 0; #phase to be run on next timer call: 0 -> fade in, 1 -> stay on, 2 -> fade out, 3 -> stay off
+		m.cycleTimer = maketimer(0.1, func {
+			if(getprop(propSwitch)) {
+				if(m.phase == 0) {
+					interpolate(propOut, 1, m.fadeIn);
+					m.phase = 1;
+					m.cycleTimer.restart(m.fadeIn);
+				}
+				else if(m.phase == 1){
+					m.phase = 2;
+					m.cycleTimer.restart(m.stayOn);
+				}
+				else if(m.phase == 2){
+					interpolate(propOut, 0, m.fadeOut);
+					m.phase = 3;
+					m.cycleTimer.restart(m.fadeOut);
+				}
+				else if(m.phase == 3){
+					m.phase = 0;
+					m.cycleTimer.restart(m.stayOff);
+				}
+			}
+			else {
+				interpolate(propOut, 0, m.turnOff); #kills any currently ongoing interpolation
+				m.phase = 0;
+			}
+		});
+		m.cycleTimer.singleShot = 1;
+		if(propSwitch==nil) {
+			m.listen = nil;
+			return m;
+		}
+		m.listen = setlistener(propSwitch, func{m.cycleTimer.restart(0);}); #handle switch changes
+		m.cycleTimer.restart(0); #start the looping
+		return m;
+	},
+	#destructor
+	del: func {
+		if(me.listen!=nil) removelistener(me.listen);
+		me.cycleTimer.stop();
+	},
+};
+
+#By default, the switch property is initialized to 1 (only if no value is already assigned). Don't change the class implementation! To override this, set the property manually. You don't need to care if any other code already does it for you. 
+var navLights = nil;
+if(!navStillOn) {
+	navLights = lightCycle.new(navSwitch, lightsPath~"nav-lights-intensity");
+	### Uncomment and tune those to customize times ###
+	#navLights.fadeIn = 0.4; #fade in time 
+	#navLights.fadeOut = 0.4; #fade out time
+	#navLights.stayOn = 3 + rand()*0.05-0.025; #stable on period
+	#navLights.stayOff = 0.6; #stable off period
+	#navLights.turnOff = 0.12; #fade out time when turned off
+}
+
+
+### BEACON ###
+var beacon = nil;
+if(beaconSwitch!=nil) {
+	props.globals.initNode(beaconSwitch, 1, "BOOL");
+	beacon = aircraft.light.new(lightsPath~"beacon-state", 
+		[0.0, 1.0 + rand()*0.05-0.025], beaconSwitch);
+}
+	
+	
+### STROBE ###
+var strobe = nil;
+if(strobeSwitch!=nil) {
+	props.globals.initNode(strobeSwitch, 1, "BOOL");
+	strobe = aircraft.light.new(lightsPath~"strobe-state", 
+		[0.0, 0.87 + rand()*0.05-0.025], strobeSwitch);
+}
+
+
+### LIGHT FADING ###
+
+#class for controlling fade in/out behavior - propIn is a control property (handled as a boolean) and propOut is interpolated
+#all light brightness animations in xmls depend on propOut (Rembrandt brightness, material emission, flares transparency, ...)
+var lightFadeInOut = {
+	#constructor
+	new: func(propSwitch, propOut) {
+		m = { parents: [lightFadeInOut] };
+		m.fadeIn = 0.3; #some sane defaults
+		m.fadeOut = 0.4;
+		if(propSwitch==nil) {
+			m.listen = nil;
+			return m;
+		}
+		props.globals.initNode(propSwitch, 1, "BOOL");
+		m.isOn = getprop(propSwitch);
+		props.globals.initNode(propOut, m.isOn, "DOUBLE");
+		m.listen = setlistener(propSwitch, 
+			func {
+				if(m.isOn and !getprop(propSwitch)) {
+					interpolate(propOut, 0, m.fadeOut);
+					m.isOn = 0;
+				}
+				if(!m.isOn and getprop(propSwitch)) {
+					interpolate(propOut, 1, m.fadeIn);
+					m.isOn = 1;
+				}
+			}
+		);
+		return m;
+	},
+	#destructor
+	del: func {
+		if(me.listen!=nil) removelistener(me.listen);
+	},
+};
+
+fadeLanding = lightFadeInOut.new(landingSwitch, lightsPath~"landing-lights-intensity");
+fadeLanding = lightFadeInOut.new(searchSwitch, lightsPath~"search-lights-intensity");
+fadeTaxi = lightFadeInOut.new(taxiSwitch, lightsPath~"taxi-light-intensity");
+fadeProbe = lightFadeInOut.new(probeSwitch, lightsPath~"probe-light-intensity");
+fadeWhite = lightFadeInOut.new(whiteSwitch, lightsPath~"white-light-intensity");
+if(navStillOn) {
+	navLights = lightFadeInOut.new(navSwitch, lightsPath~"nav-lights-intensity");
+	navLights.fadeIn = 0.1;
+	navLights.fadeOut = 0.12;
+}
+#manipulate times if defaults don't fit your needs:
+#fadeLanding.fadeIn = 0.5;
+#fadeLanding.fadeOut = 0.8;
+
+
+### the rest of your model load embedded Nasal code ###
+
+    ]]>
+		
+        </load>
+
+        <unload>
+			  #prevent multiple timers and listeners from running and fighting on next connect
+      #cleanly destroy MP property mirroring
+      mirrorTimer.stop();
+      mirrorTimer = nil;
+      mirrorValues = nil;
+      
+      #cleanly destroy nav lights
+      if(navStillOn) {
+      	navLights.del();
+      }
+      else {
+      	if(navSwitch!=nil) setprop(navSwitch, 0);
+      	navLights.del();
+      	if(navSwitch!=nil) navLights.cycleTimer = nil;
+      	navLights = nil;
+      }
+      
+      #cleanly destroy beacon
+      if(beaconSwitch!=nil) setprop(beaconSwitch, 0);
+      beacon.del();
+      beacon = nil;
+      
+      #cleanly destroy strobe
+      if(strobeSwitch!=nil) setprop(strobeSwitch, 0);
+      strobe.del();
+      strobe = nil;
+      
+      #cleanly destroy light fade in/out animation objects
+      fadeLanding.del();
+      fadeTaxi.del();
+      fadeProbe.del();
+      fadeWhite.del();
+      
+      ### the rest of your model unload embedded Nasal code ###
+            livery_update.stop();
+			
+        </unload>
+    </nasal>
+	
+	<!-- livery code -->
+  
+   <animation>
+        <type>material</type>
+                <object-name>CanopyFrame</object-name>
+                <object-name>Plane.003</object-name>
+		<object-name>Cube.004</object-name>
+		<object-name>Plane.005</object-name>
+		<object-name>gearLLeg</object-name>
+		<object-name>Plane.003</object-name>
+		<object-name>Cube.004</object-name>
+		<object-name>Plane.005</object-name>
+		<object-name>gearRLeg</object-name>
+		<object-name>Cylinder.020</object-name>
+		<object-name>Cylinder.019</object-name>
+		<object-name>Cylinder.018</object-name>
+		<object-name>Plane.001</object-name>
+		<object-name>rudder</object-name>
+		<object-name>gearFLegUp</object-name>
+        <property-base>sim/model/livery</property-base>
+        <texture-prop>texture</texture-prop>
+        <texture>body_all.png</texture>
+    </animation>
+	
+	 <effect>
+    <inherits-from>Aircraft/JT-5B/Models/Effects/reflect-uber</inherits-from>
+               <object-name>CanopyFrame</object-name>
+   <object-name>Plane.003</object-name>
+		<object-name>Cube.004</object-name>
+		<object-name>Plane.005</object-name>
+		<object-name>gearLLeg</object-name>
+		<object-name>Plane.003</object-name>
+		<object-name>Cube.004</object-name>
+		<object-name>Plane.005</object-name>
+		<object-name>gearRLeg</object-name>
+		<object-name>Cylinder.020</object-name>
+		<object-name>Cylinder.019</object-name>
+		<object-name>Cylinder.018</object-name>
+		<object-name>Plane.001</object-name>
+		<object-name>rudder</object-name>
+  </effect>
+
+<!-- Canopy -->
+    
+  <animation>
+    <type>rotate</type>
+    <object-name>CanopyFrame</object-name>
+    <object-name>CanopyGlass</object-name>
+    <property>sim/multiplay/generic/float[0]</property>
+    <factor>100</factor>
+  <interpolation>
+  <entry><ind>1</ind><dep>0</dep></entry>
+  <entry><ind>1</ind><dep>0</dep></entry>
+  <entry><ind>0</ind><dep>100</dep></entry>
+ </interpolation>
+ <center> 
+        <x-m>-0.678</x-m>
+        <y-m>-0.312</y-m>
+        <z-m>0.044</z-m>
+   </center>
+ <axis>
+  <x1-m>-1.296</x1-m>
+  <y1-m>-0.227</y1-m>
+  <z1-m>-0.012</z1-m>
+  <x2-m>-0.133</x2-m>
+  <y2-m>-0.320</y2-m>
+  <z2-m>0.093</z2-m>
+ </axis>
+</animation>
+
+<!-- light pack -->
+	
+  <model>
+    <path>Aircraft/JT-5B/Models/lights/LightPack.xml</path>
+    <offsets>
+      <x-m>0</x-m>
+      <y-m>0</y-m>
+      <z-m>0</z-m>
+    </offsets>
+  </model>
+
+	
+    <animation>
+    <object-name>propeller</object-name>
+    
+    <object-name>rotorMiddle</object-name>
+    <object-name>rotorBlade1F</object-name>
+    <object-name>rotorBlade2B</object-name>
+
+    <object-name>rudder</object-name>
+    <object-name>controlstick</object-name>
+    <object-name>controlstick_brake</object-name>
+    
+    <object-name>pedalL</object-name>
+    <object-name>pedalR</object-name>
+    <object-name>rudder</object-name>
+    
+    <object-name>gearF</object-name>
+    <object-name>gearFLeg</object-name>
+    <object-name>gearFLegUp</object-name>
+    
+    <object-name>gearL</object-name>
+    <object-name>gearLLeg</object-name>
+    <object-name>gearR</object-name>
+    <object-name>gearRLeg</object-name>
+
+    <object-name>rotorHead</object-name>
+    <object-name>rotorPitchBase</object-name>
+    <object-name>rotorYawBase</object-name>
+   
+    <object-name>rotorLinkL</object-name>
+    <object-name>rotorLinkR</object-name>
+    <object-name>rotorLinkPre</object-name>
+
+    <object-name>throttle</object-name>
+	<object-name>prerotator</object-name>
+	
+	<object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	<object-name>propellerblur</object-name>	
+	
+  </animation>
+  
+<effect>
+	<inherits-from>Effects/model-transparent</inherits-from>
+	
+	<object-name>propellerblur</object-name>
+	<object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	
+	<object-name>rotorBlade1FblurHigh</object-name>
+	<object-name>rotorBlade2BblurHigh</object-name>
+	<object-name>rotorBlade1FblurHigh2</object-name>
+	<object-name>rotorBlade2BblurHigh2</object-name>
+	
+</effect>
+
+ <effect>
+   <inherits-from>Aircraft/JT-5B/Models/Effects/bk117reflectglas-uber</inherits-from>
+  
+   <!-- <condition>
+      <property>sim/rendering/rembrandt/enabled</property>
+    </condition>-->
+ <object-name>canopyGlass</object-name>
+  </effect>		
+
+
+<animation>
+    <type>rotate</type>
+    <object-name>throttle</object-name>
+    <object-name>prerotator</object-name>
+	<property>/controls/engines/engine[0]/throttle</property>
+    <factor> -50 </factor>
+    <center>
+      <x-m> -0.7722 </x-m>
+      <y-m> -0.2583 </y-m>
+      <z-m> -0.04885</z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y>  1 </y>
+      <z>  0 </z>
+    </axis>
+  </animation>
+
+  
+<animation>
+  <type>spin</type>
+ <object-name>propeller</object-name>
+   <condition>
+       <less-than>
+        <property>engines/engine[0]/rpm</property>
+        <value>1000.000</value>
+      </less-than>
+       </condition>
+ <property>engines/engine[0]/rpm</property>
+  <factor>0.05</factor>
+  <center>
+      <x-m> 0.5817 </x-m>
+      <y-m> -0.000075 </y-m>
+      <z-m> 0.2388 </z-m>
+    </center>
+    <axis>
+      <x>  1 </x>
+      <y>  0 </y>
+      <z>  0 </z>
+    </axis>
+ </animation> 
+
+<animation>
+  <type>spin</type>
+ <object-name>propeller</object-name>
+   <condition>
+    <and>
+      <greater-than>
+        <property>engines/engine[0]/rpm</property>
+        <value>1000.0001</value>
+      </greater-than>
+      <less-than>
+        <property>engines/engine[0]/rpm</property>
+        <value>1600.000</value>
+      </less-than>
+    </and>
+    </condition>
+     <property>engines/engine[0]/rpm</property>
+  <factor>1</factor>
+  <center>
+      <x-m> 0.5817 </x-m>
+      <y-m> -0.000075 </y-m>
+      <z-m> 0.2388 </z-m>
+    </center>
+    <axis>
+      <x>  1 </x>
+      <y>  0 </y>
+      <z>  0 </z>
+    </axis>
+ </animation> 
+
+
+<animation>
+  <type>spin</type>
+ <object-name>propeller</object-name>
+   <condition>
+      <greater-than>
+        <property>engines/engine[0]/rpm</property>
+        <value>1600.0001</value>
+      </greater-than>
+    </condition>
+     <property>engines/engine[0]/rpm</property>
+  <factor>0.02</factor>
+  <center>
+      <x-m> 0.5817 </x-m>
+      <y-m> -0.000075 </y-m>
+      <z-m> 0.2388 </z-m>
+    </center>
+    <axis>
+      <x>  -1 </x>
+      <y>  0 </y>
+      <z>  0 </z>
+    </axis>
+ </animation> 
+ 
+ 
+  <animation>
+    <type>rotate</type>
+    <object-name>controlstick</object-name>
+    <object-name>controlstick_brake</object-name>
+    <property>rotors/main/tilt/roll-deg</property>
+    <factor> 1 </factor>
+    <center>
+      <x-m>  -0.7139</x-m>
+      <y-m> 0.000005 </y-m>
+      <z-m> -0.3565 </z-m>
+    </center>
+    <axis>
+      <x> 1 </x>
+      <y> 0 </y>
+      <z> 0 </z>
+    </axis>
+  </animation>
+  
+  <animation>
+    <type>rotate</type>
+    <object-name>controlstick</object-name>
+    <object-name>controlstick_brake</object-name>
+    <property>rotors/main/tilt/pitch-deg</property>
+    <factor> 1 </factor>
+    <offset-deg>-16</offset-deg>
+    <center>
+      <x-m>  -0.7139</x-m>
+      <y-m> 0.000005 </y-m>
+      <z-m> -0.3565 </z-m>
+    </center>
+    <axis>
+      <x> 0 </x>
+      <y> 1 </y>
+      <z> 0 </z>
+    </axis>
+  </animation>
+
+
+   <animation>
+    <type>rotate</type>
+    <object-name>rotorMiddle</object-name>
+    <object-name>rotorBlade1F</object-name>
+    <object-name>rotorBlade2B</object-name>
+	
+	<object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	
+	<object-name>rotorBlade1FLow</object-name>
+	<object-name>rotorBlade2BLow</object-name>
+	<object-name>rotorBlade1FblurHigh</object-name>
+	<object-name>rotorBlade2BblurHigh</object-name>
+	<object-name>rotorBlade1FblurHigh2</object-name>
+	<object-name>rotorBlade2BblurHigh2</object-name>
+	
+    <object-name>rotorHead</object-name>
+    <object-name>rotorPitchBase</object-name>
+    <object-name>rotorYawBase</object-name>
+    <property>rotors/main/tilt/roll-deg</property>
+    <factor> -1 </factor>
+    <axis>
+      <x1-m> 0.1501 	</x1-m>
+      <y1-m> 0.000005	</y1-m>
+      <z1-m> 1.0934	</z1-m>
+      <x2-m> 0.0935 	</x2-m>
+      <y2-m> 0.000005 	</y2-m>
+      <z2-m>  1.1051	</z2-m>
+    </axis>
+  </animation>
+  
+  <animation>
+    <type>rotate</type>
+    <object-name>rotorMiddle</object-name>
+    <object-name>rotorBlade1F</object-name>
+    <object-name>rotorBlade2B</object-name>
+	
+	<object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	
+	<object-name>rotorBlade1FLow</object-name>
+	<object-name>rotorBlade2BLow</object-name>
+	<object-name>rotorBlade1FblurHigh</object-name>
+	<object-name>rotorBlade2BblurHigh</object-name>
+	<object-name>rotorBlade1FblurHigh2</object-name>
+	<object-name>rotorBlade2BblurHigh2</object-name>
+	
+    <object-name>rotorHead</object-name>
+    <object-name>rotorPitchBase</object-name>
+    <property>rotors/main/tilt/pitch-deg</property>
+    <factor> -1 </factor>
+    <center>
+	<x-m>0.1350	</x-m>
+	<y-m>-0.0000	</y-m>
+	<z-m>1.1288	</z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y>  -1 </y>
+      <z>  0 </z>
+    </axis>
+  </animation>
+
+
+  <animation>
+    <type>translate</type>
+    <object-name>rotorLinkR</object-name>
+    <property>rotors/main/tilt/pitch-deg</property>
+    <factor>-0.0035 </factor>
+    <axis>
+      <x1-m> -0.2452</x1-m>
+      <y1-m>0.04034</y1-m>
+      <z1-m> -0.2671</z1-m>
+      <x2-m> 0.3014</x2-m>
+      <y2-m>0.1265</y2-m>
+      <z2-m>1.0638</z2-m>
+    </axis>
+</animation>
+
+  <animation>
+    <type>translate</type>
+    <object-name>rotorLinkL</object-name>
+    <property>rotors/main/tilt/pitch-deg</property>
+    <factor>-0.0035</factor>
+    <axis>
+      <x1-m>-0.2452</x1-m>
+      <y1-m>-0.0403</y1-m>
+      <z1-m> -0.2671</z1-m>
+      <x2-m>0.3014</x2-m>
+      <y2-m>-0.1265</y2-m>
+      <z2-m>1.0638</z2-m>
+    </axis>
+  </animation>
+
+  <animation>
+    <type>rotate</type>
+    <object-name>rotorLinkR</object-name>
+    <object-name>rotorLinkL</object-name>
+    <property>rotors/main/tilt/pitch-deg</property>
+    <factor>-0.01 </factor>
+    <axis>
+      <x1-m> -0.2452</x1-m>
+      <y1-m>0.04034</y1-m>
+      <z1-m> -0.2671</z1-m>
+      <x2-m> -0.2452</x2-m>
+      <y2-m>-0.04034</y2-m>
+      <z2-m> -0.2671</z2-m>
+    </axis>
+</animation>
+
+
+  <animation>
+    <type>rotate</type>
+    <object-name>rotorLinkR</object-name>
+    <object-name>rotorLinkL</object-name>
+    <property>rotors/main/tilt/pitch-deg</property>
+    <factor>-0.01 </factor>
+    <axis>
+      <x1-m> -0.2452</x1-m>
+      <y1-m>0.04034</y1-m>
+      <z1-m> -0.2671</z1-m>
+      <x2-m> -0.2452</x2-m>
+      <y2-m>-0.04034</y2-m>
+      <z2-m> -0.2671</z2-m>
+    </axis>
+</animation>
+
+
+  <animation>
+    <type>translate</type>
+    <object-name>rotorLinkR</object-name>
+    <property>rotors/main/tilt/roll-deg</property>
+    <factor>0.0028</factor>
+    <axis>
+	<x>  0 </x>
+	<y>  0 </y>
+	<z>  1 </z>
+    </axis>
+</animation>
+
+  <animation>
+    <type>translate</type>
+    <object-name>rotorLinkL</object-name>
+   <property>rotors/main/tilt/roll-deg</property>
+    <factor>-0.0028</factor>
+    <axis>
+	<x>  0 </x>
+	<y>  0 </y>
+	<z>  1 </z>
+    </axis>
+  </animation>
+  
+  
+
+    <animation>
+    <type>rotate</type>
+    <object-name>rotorLinkPre</object-name>
+	<property>rotors/main/tilt/roll-deg</property>
+    <factor> 0.2</factor>
+    <center>
+      <x-m>  -0.1831 </x-m>
+      <y-m>  0.00000 </y-m>
+      <z-m>  0.4925 </z-m>
+    </center>
+    <axis>
+      <x> -1 </x>
+      <y> 0 </y>
+      <z> 0 </z>
+    </axis>
+  </animation>
+  
+  
+    <animation>
+    <type>rotate</type>
+    <object-name>rotorLinkPre</object-name>
+	 <property>rotors/main/tilt/pitch-deg</property>
+    <factor> 0.2</factor>
+    <center>
+      <x-m>  -0.1831 </x-m>
+      <y-m>  0.00000 </y-m>
+      <z-m>  0.4925 </z-m>
+    </center>
+    <axis>
+      <x> 0 </x>
+      <y> -1 </y>
+      <z> 0 </z>
+    </axis>
+  </animation>
+  
+
+ <animation>
+	<type>spin</type>
+	<object-name>rotorMiddle</object-name>
+	<object-name>rotorBlade1F</object-name>
+	<object-name>rotorBlade2B</object-name>
+	
+	<object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	
+	<object-name>rotorBlade1FLow</object-name>
+	<object-name>rotorBlade2BLow</object-name>
+	<object-name>rotorBlade1FblurHigh</object-name>
+	<object-name>rotorBlade2BblurHigh</object-name>
+	<object-name>rotorBlade1FblurHigh2</object-name>
+	<object-name>rotorBlade2BblurHigh2</object-name>
+	
+	<property>rotors/main/rpm</property>
+	<factor>1</factor>
+	<offset-deg>0</offset-deg>
+	<axis>
+		<x>0</x>
+		<y>0</y>
+		<z>1</z>
+	</axis>
+	<center>
+		<x-m>0.1652</x-m>
+		<y-m>0.000005</y-m>
+		<z-m>1.1887</z-m>
+	</center>
+</animation>
+
+
+  <animation>
+    <type>select</type>
+	<object-name>rotorBlade1FLow</object-name>
+	<object-name>rotorBlade2BLow</object-name>
+    <condition>
+      <less-than>
+        <property>rotors/main/rpm</property>
+        <value>100.001</value>
+      </less-than> 
+    </condition>
+  </animation>
+  
+  <animation>
+    <type>select</type>
+	<object-name>rotorBlade1F</object-name>
+	<object-name>rotorBlade2B</object-name>
+    <object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	<condition>
+	<and>
+      <greater-than>
+        <property>rotors/main/rpm</property>
+        <value>100</value>
+      </greater-than>
+	  <less-than>
+        <property>rotors/main/rpm</property>
+        <value>250.001</value>
+      </less-than>
+    </and>
+    </condition>
+  </animation>
+  
+    <animation>
+    <type>select</type>
+	<object-name>rotorBlade1FblurHigh</object-name>
+	<object-name>rotorBlade2BblurHigh</object-name>
+    <condition>
+	<and>
+      <greater-than>
+        <property>rotors/main/rpm</property>
+        <value>250</value>
+      </greater-than>
+	  <less-than>
+        <property>rotors/main/rpm</property>
+        <value>400.001</value>
+      </less-than>
+    </and>
+	</condition>
+  </animation>
+  
+  <animation>
+    <type>select</type>
+	<object-name>rotorBlade1FblurHigh2</object-name>
+	<object-name>rotorBlade2BblurHigh2</object-name>
+    <condition>
+      <greater-than>
+        <property>rotors/main/rpm</property>
+        <value>400</value>
+      </greater-than>
+    </condition>
+  </animation>
+
+ 
+  <animation>
+    <type>select</type>
+	<object-name>propellerblur</object-name>	
+    <condition>
+      <greater-than>
+        <property>engines/engine[0]/rpm</property>
+        <value>1500</value>
+      </greater-than>
+    </condition>
+  </animation>
+
+  <animation>
+    <type>select</type>
+    <object-name>propeller</object-name>
+    <condition>
+      <less-than>
+        <property>engines/engine[0]/rpm</property>
+        <value>2500.001</value>
+      </less-than>
+    </condition>
+  </animation>
+  
+
+<!-- rudder -->
+
+ <animation>
+    <type>rotate</type>
+    <object-name>rudder</object-name>
+    <property>surface-positions/rudder-pos-norm</property>
+    <factor> 40</factor>
+    <center>
+      <x-m> 1.2432 </x-m>
+      <y-m>  0.000008 </y-m>
+      <z-m> -0.120 </z-m>
+    </center>
+    <axis>
+      <x> 0 </x>
+      <y> 0 </y>
+      <z> 1 </z>
+    </axis>
+  </animation>
+
+
+<animation>
+    <type>rotate</type>
+    <object-name>pedalL</object-name>
+    <property>surface-positions/rudder-pos-norm</property>
+    <factor> 20 </factor>
+    <center>
+       <x-m> -1.3445 </x-m>
+      <y-m>0.0900</y-m>
+      <z-m> -0.2457</z-m>
+    </center>
+    <axis>
+      <x> 0 </x>
+      <y> 1 </y>
+      <z> 0 </z>
+    </axis>
+  </animation>
+
+  <animation>
+    <type>rotate</type>
+    <object-name>pedalR</object-name>
+    <property>surface-positions/rudder-pos-norm</property>
+    <factor> 20 </factor>
+    <center>
+      <x-m> -1.3445 </x-m>
+      <y-m>-0.0900</y-m>
+      <z-m> -0.2457</z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y> -1 </y>
+      <z>  0 </z>
+    </axis>
+  </animation>
+
+<animation>
+    <type>rotate</type>
+    <object-name>gearF</object-name>
+    <object-name>gearFLeg</object-name>
+    <object-name>gearFLegUp</object-name>
+    <property>surface-positions/rudder-pos-norm</property>
+    <factor> 20 </factor>
+    <center>
+      <x-m> -1.0799</x-m>
+      <y-m> 0.0000</y-m>
+      <z-m> -0.5957</z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y>  0 </y>
+      <z> -1 </z>
+    </axis>
+  </animation>
+  
+  
+  
+   <animation>
+    <type>rotate</type>
+    <object-name>gearL</object-name>
+    <object-name>gearLLeg</object-name>
+    <property>gear/gear[1]/compression-norm</property>
+    <center>
+      <x-m> -0.03969 </x-m>
+      <y-m>  0.1061 </y-m>
+      <z-m> -0.18558 </z-m>
+    </center>
+    <axis>
+      <x> -1 </x>
+      <y> 0 </y>
+      <z> 0 </z>
+    </axis>
+	<interpolation>
+		<entry>
+		<ind> 0.0</ind>
+		<dep> -4.0</dep>
+		</entry>
+		<entry>
+		<ind> 0.01</ind>
+		<dep> -1.0</dep>
+		</entry>
+		<entry>
+		<ind> 1.0</ind>
+		<dep> 0.0</dep>
+		</entry>
+	</interpolation>
+  </animation>
+
+    <animation>
+    <type>rotate</type>
+    <object-name>gearR</object-name>
+    <object-name>gearRLeg</object-name>
+    <property>gear/gear[2]/compression-norm</property>
+    <center>
+      <x-m> -0.03969 </x-m>
+      <y-m>  -0.10611 </y-m>
+      <z-m>  -0.18559 </z-m>
+    </center>
+    <axis>
+      <x> 1 </x>
+      <y> 0 </y>
+      <z> 0 </z>
+    </axis>
+	<interpolation>
+		<entry>
+		<ind> 0.0</ind>
+		<dep> -4.0</dep>
+		</entry>
+		<entry>
+		<ind> 0.01</ind>
+		<dep> -1.0</dep>
+		</entry>
+		<entry>
+		<ind> 1.0</ind>
+		<dep> 0.0</dep>
+		</entry>
+	</interpolation>
+  </animation>
+  
+  
+<!-- gears -->
+
+  <animation>
+    <type>spin</type>
+    <object-name>gearF</object-name>
+    <property>sim/multiplay/generic/float[9]</property>
+    <factor> 30 </factor>
+    <center>
+      <x-m>-1.0146</x-m>
+      <y-m> 0.000000 </y-m>
+      <z-m> -0.6211 </z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y> -1 </y>
+      <z>  0 </z>
+    </axis>
+  </animation>
+
+
+  <animation>
+    <type>spin</type>
+    <object-name>gearR</object-name>
+    <property>sim/multiplay/generic/float[10]</property>
+    <factor> 30 </factor>
+    <center>
+	<x-m> 0.0496 </x-m> 
+	<y-m> 0.7828</y-m>
+	<z-m> -0.5985</z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y> -1 </y>
+      <z>  0 </z>
+    </axis>
+  </animation>
+
+  <animation>
+    <type>spin</type>
+    <object-name>gearL</object-name>
+    <property>sim/multiplay/generic/float[11]</property>
+    <factor> 30 </factor>
+    <center>
+	<x-m> 0.0496 </x-m>
+          <y-m> -0.7827</y-m>
+          <z-m> -0.5985</z-m>
+    </center>
+    <axis>
+      <x>  0 </x>
+      <y> -1 </y>
+      <z>  0 </z>
+    </axis>
+  </animation>
+
+
+  <animation>
+    <type>noshadow</type>
+	<object-name>rotorBlade1Fblur</object-name>
+	<object-name>rotorBlade2Bblur</object-name>
+	<object-name>propellerblur</object-name>	
+  </animation>
+ 
+<!--
+	<model>
+		<path>Aircraft/JT-5B/Models/Effects/shadow.xml</path>
+	</model>
+-->
+ 
+    <model>
+        <name>panel1</name>
+        <path>Aircraft/JT-5B/Models/panel1.xml</path>
+        <offsets>
+            <x-m>0</x-m>
+            <y-m>0</y-m>
+            <z-m>0.14</z-m>
+            <pitch-deg>-8</pitch-deg>
+        </offsets>
+    </model>
+
+   <model>
+    <name>pilot</name>
+    <path>Aircraft/JT-5B/Models/pilot.xml</path>
+    <offsets>
+      <x-m>0</x-m>
+      <y-m>0</y-m>
+      <z-m>0</z-m>
+    </offsets>
+  </model> 
+
+<!-- Cranking effects -->
+
+ <model>
+    <path>Aircraft/JT-5B/Models/Effects/cranking/cranking.xml</path>
+    <offsets>
+      <x-m>0.418</x-m>
+      <y-m> 0</y-m>
+      <z-m>0.603</z-m>
+      <pitch-deg>  45 </pitch-deg>
+    </offsets>
+  </model>
+
+<!-- Tire Smoke -->
+ 
+ <!--  Nose Wheel -->
+  <model>
+    <path>Aircraft/JT-5B/Models/Effects/ground/ground2.xml</path>
+    <offsets>
+      <x-m>-0.814</x-m>
+      <y-m>0.000</y-m>
+      <z-m>-0.729</z-m>
+    </offsets>
+  </model>
+
+  <!-- Port Wheel -->
+  <model>
+    <path>Aircraft/JT-5B/Models/Effects/ground/ground1.xml</path>
+    <offsets>
+      <x-m>0.255</x-m>
+      <y-m>-0.795</y-m>
+      <z-m>-0.711</z-m>
+    </offsets>
+  </model>
+
+  <!-- Star Wheel -->
+  <model>
+    <path>Aircraft/JT-5B/Models/Effects/ground/ground0.xml</path>
+    <offsets>
+       <x-m>0.255</x-m>
+      <y-m>0.795</y-m>
+      <z-m>-0.711</z-m>
+    </offsets>
+  </model>
+
+<!-- Air Pollution effects -->
+
+<model>
+    <path>Aircraft/JT-5B/Models/Effects/exhaustsmoke.xml</path>
+    <offsets>
+      <x-m>0.418</x-m>
+      <y-m> 0</y-m>
+      <z-m>0.603</z-m>
+      <pitch-deg>  45 </pitch-deg>
+    </offsets>
+  </model>
+
+<model>
+    <path>Aircraft/JT-5B/Particles/smoke.xml</path>
+    <offsets>
+      <x-m>2.00</x-m>
+      <y-m> 0.000 </y-m> 
+       <z-m>-0.200</z-m> 
+      <pitch-deg>0</pitch-deg>
+    </offsets>
+  </model>  
+ 
+</PropertyList>
+
